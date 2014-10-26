@@ -8,8 +8,9 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.List (sort)
 import Data.Char (isSpace)
-import Data.Maybe
+import Data.Either (isLeft)
 import System.Console.GetOpt
+import Control.Monad (when)
 
 
 exitIfErrors :: [String] -> IO String
@@ -50,17 +51,10 @@ options :: [OptDescr (Options -> IO Options)]
 options = [ Option "h" ["help"] (NoArg showHelp) "Display help message."
           , Option "v" ["version"] (NoArg showVersion) "Show the version."
 
-          , Option "b" ["integration-branch"]
-            (ReqArg (\b opt -> return opt {optBranch = Just b}) "BRANCH")
-            "Remote branches that have been merged into this branch will be sheared."
           , Option "l" ["limit"]
             (ReqArg (\l opt -> return opt {optLimit = Just $ read l}) "LIMIT")
             "Limit the number of branches that will be deleted"
           ]
-
-
-integrationBranchError :: String
-integrationBranchError = "--integration-branch is a required argument"
 
 
 rstrip :: String -> String
@@ -87,6 +81,10 @@ mergedRemotes :: String -> IO String
 mergedRemotes refname = readProcess "git" ["branch", "-r", "--merged", refname] ""
 
 
+refExists :: String -> IO String
+refExists refname = readProcess "git" ["rev-parse", refname] ""
+
+
 getBranchNames :: String -> [T.Text]
 getBranchNames s = sort . filterBranches . extractBranches $ T.pack s
 
@@ -106,6 +104,13 @@ takeBranches Nothing (x:xs)  = x:xs
 takeBranches (Just i) (x:xs) = take i (x:xs)
 
 
+validateNonOptions :: [String] -> Either String String
+validateNonOptions xs = case xs of
+    []     -> Left "You must specify a refname"
+    [i]    -> Right i
+    (_:is) -> Left $ unlines ["Unsupported option: " ++ x | x <- is]
+
+
 main :: IO ()
 main = do
     args <- getArgs
@@ -113,12 +118,17 @@ main = do
     opts <- foldl (>>=) (return defaultOptions) actions
 
     _ <- exitIfErrors errors
-    -- unsure if we want to handle nonOptions, let's exit for now
-    _ <- exitIfErrors ["Unsupported option: " ++ x | x <- nonOptions]
 
-    let Options { optBranch = branch , optLimit = limit } = opts
+    let eitherRefname = validateNonOptions nonOptions
+    when (isLeft eitherRefname) $ do
+        _ <- exitIfErrors [either id (error "mismatch") eitherRefname]
+        return ()
+    let refname = either (error "mismatch") id eitherRefname
+    _ <- refExists refname
 
-    output <- mergedRemotes $ fromMaybe (error integrationBranchError) branch
+    output <- mergedRemotes refname
+
+    let Options {optLimit = limit} = opts
 
     -- ideally, takeBranches should be part of getBranchNames so that we
     -- reduce the list of branches _before_ filtering and sorting it
