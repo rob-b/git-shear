@@ -4,13 +4,11 @@ import System.IO
 import System.Exit
 import System.Process
 import System.Environment
-import qualified Data.Text as T
+import qualified Data.Text    as T
 import qualified Data.Text.IO as TIO
-import Data.List (sort)
-import Data.Char (isSpace)
-import Data.Either (isLeft)
+import Data.List              (sort)
+import Data.Char              (isSpace)
 import System.Console.GetOpt
-import Control.Monad (when)
 
 
 exitIfErrors :: [String] -> IO String
@@ -81,8 +79,14 @@ mergedRemotes :: String -> IO String
 mergedRemotes refname = readProcess "git" ["branch", "-r", "--merged", refname] ""
 
 
-refExists :: String -> IO String
-refExists refname = readProcess "git" ["rev-parse", refname] ""
+data ShellError = ShellError String Int
+
+refExists :: String -> IO (Either ShellError T.Text)
+refExists refname = do
+    (code, stdo, stde) <- readProcessWithExitCode "git" ["rev-parse", refname, "--"] ""
+    case code of
+        ExitFailure c -> return . Left $ ShellError stde c
+        ExitSuccess   -> return . Right $ T.replace "\n--" "" (T.pack stdo)
 
 
 getBranchNames :: String -> [T.Text]
@@ -100,7 +104,7 @@ branchDelete bs = [T.append "git push origin --delete " x | x <- bs]
 
 takeBranches :: Maybe Int -> [T.Text] -> [T.Text]
 takeBranches _ []            = []
-takeBranches Nothing (x:xs)  = x:xs
+takeBranches Nothing  (x:xs) = x:xs
 takeBranches (Just i) (x:xs) = take i (x:xs)
 
 
@@ -111,6 +115,20 @@ validateNonOptions xs = case xs of
     (_:is) -> Left $ unlines ["Unsupported option: " ++ x | x <- is]
 
 
+ss :: ShellError -> String
+ss (ShellError stde code) = "Result: " ++ stde
+
+
+exitWithShellError :: ShellError -> IO b
+exitWithShellError sherror = do
+    hPutStrLn stderr $ ss sherror
+    exitWith $ ExitFailure 128
+
+
+doNothing :: T.Text -> IO String
+doNothing _ = return ""
+
+
 main :: IO ()
 main = do
     args <- getArgs
@@ -118,16 +136,14 @@ main = do
     opts <- foldl (>>=) (return defaultOptions) actions
 
     _ <- exitIfErrors errors
+    _ <- case validateNonOptions nonOptions of
+        Left err      -> exitIfErrors [err]
+        Right refname -> do
+            ref <- refExists refname
+            either exitWithShellError doNothing ref
 
-    let eitherRefname = validateNonOptions nonOptions
-    when (isLeft eitherRefname) $ do
-        _ <- exitIfErrors [either id (error "mismatch") eitherRefname]
-        return ()
-    let refname = either (error "mismatch") id eitherRefname
-    _ <- refExists refname
-
+    let refname = either (error "mismatch") id (validateNonOptions nonOptions)
     output <- mergedRemotes refname
-
     let Options {optLimit = limit} = opts
 
     -- ideally, takeBranches should be part of getBranchNames so that we
