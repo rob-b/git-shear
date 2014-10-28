@@ -36,7 +36,8 @@ showHelp _ = do
 usage :: IO String
 usage = do
     prg <- getProgName
-    return $ usageInfo prg options
+    let header = "Usage: " ++ prg ++ " [OPTION]... REFNAME"
+    return $ usageInfo header options
 
 
 data Options = Options { optLimit  :: Maybe Int
