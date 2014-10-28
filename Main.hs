@@ -8,6 +8,7 @@ import qualified Data.Text    as T
 import qualified Data.Text.IO as TIO
 import Data.List              (sort)
 import Data.Char              (isSpace)
+import Data.Either            (lefts, rights)
 import System.Console.GetOpt
 
 
@@ -38,12 +39,14 @@ usage = do
     return $ usageInfo prg options
 
 
-data Options = Options { optBranch  :: Maybe String
-                       , optLimit   :: Maybe Int}
+data Options = Options { optLimit  :: Maybe Int
+                       , optRemote :: T.Text
+                       , optDryRun :: Bool}
                deriving (Show, Eq)
 
 defaultOptions :: Options
-defaultOptions = Options { optBranch  = Nothing, optLimit = Nothing}
+defaultOptions = Options { optRemote = "origin", optDryRun  = False, optLimit = Nothing}
+
 
 options :: [OptDescr (Options -> IO Options)]
 options = [ Option "h" ["help"] (NoArg showHelp) "Display help message."
@@ -52,6 +55,9 @@ options = [ Option "h" ["help"] (NoArg showHelp) "Display help message."
           , Option "l" ["limit"]
             (ReqArg (\l opt -> return opt {optLimit = Just $ read l}) "LIMIT")
             "Limit the number of branches that will be deleted"
+          , Option "n" ["dry-run"]
+            (NoArg (\opt -> return opt {optDryRun = True} ))
+            "Do not actually delete stale branches"
           ]
 
 
@@ -93,13 +99,44 @@ getBranchNames :: String -> [T.Text]
 getBranchNames s = sort . filterBranches . extractBranches $ T.pack s
 
 
+stripRemoteFromName :: T.Text -> [T.Text] -> [T.Text]
+stripRemoteFromName r xs = map (T.replace (r `T.append` "/") "") xs
+
+
 branchCount :: [T.Text] -> T.Text
 branchCount bs = "Would delete the following " `T.append` amount `T.append` " branch(es):"
     where amount = T.pack . show $ length bs
 
 
-branchDelete :: [T.Text] -> [T.Text]
-branchDelete bs = [T.append "git push origin --delete " x | x <- bs]
+branchDeleteCmds :: [T.Text] -> [T.Text]
+branchDeleteCmds bs = [T.append "git push origin --delete " x | x <- bs]
+
+
+shear :: Bool -> [T.Text] -> IO T.Text
+shear doCommand cmds = case (doCommand, cmds) of
+    (_, []) -> do
+        error "No command to execute"
+    (False, xs) -> do
+        TIO.putStrLn $ branchCount xs
+        exec $ getAllCmds $ map (flip T.append " --dry-run") xs
+        return ""
+    (True, xs) -> do
+        exec $ getAllCmds xs
+        return ""
+    where separate (_:xx) = ("git", (map T.unpack xx))
+          getAllCmds = map (separate .T.words)
+          exec cs = do
+            x <- mapM (\t -> runCmds (fst t) (snd t)) cs
+            TIO.putStrLn $ T.unlines (rights x)
+            putStrLn . unlines $ map ss (lefts x)
+
+
+runCmds :: String -> [String] -> IO (Either ShellError T.Text)
+runCmds fname args = do
+    (code, _, stde) <- readProcessWithExitCode fname args ""
+    case code of
+        ExitFailure c -> return . Left $ ShellError stde c
+        ExitSuccess   -> return . Right $ T.pack stde
 
 
 takeBranches :: Maybe Int -> [T.Text] -> [T.Text]
@@ -144,10 +181,10 @@ main = do
 
     let refname = either (error "mismatch") id (validateNonOptions nonOptions)
     output <- mergedRemotes refname
-    let Options {optLimit = limit} = opts
+    let Options {optLimit = limit, optDryRun = dryRun, optRemote = remote} = opts
 
     -- ideally, takeBranches should be part of getBranchNames so that we
     -- reduce the list of branches _before_ filtering and sorting it
-    let bs = takeBranches limit . getBranchNames $ output
-    TIO.putStrLn $ branchCount bs
-    TIO.putStr . T.unlines $ branchDelete bs
+    let bs = (stripRemoteFromName remote) . (takeBranches limit) . getBranchNames $ output
+    _ <- shear (not dryRun) $ branchDeleteCmds bs
+    return ()
