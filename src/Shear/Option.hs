@@ -15,6 +15,13 @@ import System.Console.GetOpt
 import qualified Data.Text as T
 
 
+usage :: String
+usage = usageInfo header options
+  where
+    header = "Usage: git shear [OPTION...] REFNAME\n" ++
+             "Delete remote branches that have been merged into a given ref.\n"
+
+
 showVersion :: Options -> IO Options
 showVersion _ = do
     hPutStrLn stderr "0.1.0"
@@ -26,13 +33,6 @@ showHelp _ = do
     prg <- getProgName
     hPutStrLn stderr (usageInfo prg options)
     exitSuccess
-
-
-usage :: IO String
-usage = do
-    prg <- getProgName
-    let header = "Usage: " ++ prg ++ " [OPTION]... REFNAME"
-    return $ usageInfo header options
 
 
 data Options = Options { optLimit  :: Maybe Int

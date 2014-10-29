@@ -18,10 +18,10 @@ import System.Console.GetOpt  (getOpt, ArgOrder(..))
 exitIfErrors :: [String] -> IO String
 exitIfErrors [] = return ""
 exitIfErrors es = do
-    u <- usage
-    let msg = unlines(map rstrip es) ++ "\n\n" ++ u
+    let msg = unlines(map rstrip es) ++ "\n\n" ++ usage
     hPutStrLn stderr msg
     exitWith $ ExitFailure 10
+
 
 rstrip :: String -> String
 rstrip = reverse . dropWhile isSpace . reverse
