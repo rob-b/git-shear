@@ -15,6 +15,12 @@ import Data.Either            (lefts, rights)
 import System.Console.GetOpt  (getOpt, ArgOrder(..))
 
 
+exitWithShellError :: ShellError -> IO b
+exitWithShellError sherror = do
+    hPutStrLn stderr $ ss sherror
+    exitWith $ ExitFailure 128
+
+
 exitIfErrors :: [String] -> IO String
 exitIfErrors [] = return ""
 exitIfErrors es = do
@@ -31,12 +37,10 @@ isProtectedBranch :: T.Text -> Bool
 isProtectedBranch t = any isInfixOf ["origin/develop", "origin/master"]
     where isInfixOf = flip T.isInfixOf t
 
-isNotProtectedBranch :: T.Text -> Bool
-isNotProtectedBranch t = not (isProtectedBranch t)
-
 
 filterBranches :: [T.Text] -> [T.Text]
 filterBranches = filter isNotProtectedBranch
+    where isNotProtectedBranch t = not (isProtectedBranch t)
 
 
 extractBranches :: T.Text -> [T.Text]
@@ -118,16 +122,6 @@ ss :: ShellError -> String
 ss (ShellError stde code) = "Result: " ++ stde
 
 
-exitWithShellError :: ShellError -> IO b
-exitWithShellError sherror = do
-    hPutStrLn stderr $ ss sherror
-    exitWith $ ExitFailure 128
-
-
-doNothing :: T.Text -> IO String
-doNothing _ = return ""
-
-
 main :: IO ()
 main = do
     args <- getArgs
@@ -139,7 +133,7 @@ main = do
         Left err      -> exitIfErrors [err]
         Right refname -> do
             ref <- refExists refname
-            either exitWithShellError doNothing ref
+            either exitWithShellError (\_ -> return "") ref
 
     let refname = either (error "mismatch") id (validateNonOptions nonOptions)
     output <- mergedRemotes refname

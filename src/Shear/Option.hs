@@ -41,7 +41,9 @@ data Options = Options { optLimit  :: Maybe Int
                deriving (Show, Eq)
 
 defaultOptions :: Options
-defaultOptions = Options { optRemote = "origin", optDryRun  = False, optLimit = Nothing}
+defaultOptions = Options { optRemote = "origin"
+                         , optDryRun  = False
+                         , optLimit = Nothing}
 
 
 options :: [OptDescr (Options -> IO Options)]
