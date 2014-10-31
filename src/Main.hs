@@ -1,32 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import Shear.Option (usage , options, defaultOptions, Options(..))
-
-import System.IO
 import System.Exit
 import System.Process
-import System.Environment     (getArgs)
 import qualified Data.Text    as T
 import qualified Data.Text.IO as TIO
 import Data.List              (sort)
 import Data.Char              (isSpace)
 import Data.Either            (lefts, rights)
-import System.Console.GetOpt  (getOpt, ArgOrder(..))
-
-
-exitWithShellError :: ShellError -> IO b
-exitWithShellError sherror = do
-    hPutStrLn stderr $ ss sherror
-    exitWith $ ExitFailure 128
-
-
-exitIfErrors :: [String] -> IO String
-exitIfErrors [] = return ""
-exitIfErrors es = do
-    let msg = unlines(map rstrip es) ++ "\n\n" ++ usage
-    hPutStrLn stderr msg
-    exitWith $ ExitFailure 10
+import Options.Applicative
 
 
 rstrip :: String -> String
@@ -48,17 +30,21 @@ extractBranches s = map T.strip (T.lines s)
 
 
 mergedRemotes :: String -> IO String
-mergedRemotes refname = readProcess "git" ["branch", "-r", "--merged", refname] ""
+mergedRemotes refname' = readProcess "git" ["branch", "-r", "--merged", refname'] ""
 
 
-data ShellError = ShellError String Int
+data ShellError = ShellError { shellErrorMsg :: String
+                             , shellErrorCode :: Int }
 
 refExists :: String -> IO (Either ShellError T.Text)
-refExists refname = do
-    (code, stdo, stde) <- readProcessWithExitCode "git" ["rev-parse", refname, "--"] ""
+refExists refname' = do
+    (code, stdo, stde) <- readProcessWithExitCode "git" ["rev-parse", refname', "--"] ""
     case code of
         ExitFailure c -> return . Left $ ShellError stde c
-        ExitSuccess   -> return . Right $ T.replace "\n--" "" (T.pack stdo)
+
+        -- FIXME: a crazy amount of String -> Text -> String transformations
+        ExitSuccess   -> return . Right .T.pack $ tidyName stdo
+          where tidyName s = rstrip . T.unpack $ T.replace "--" "" (T.pack s)
 
 
 getBranchNames :: String -> [T.Text]
@@ -94,7 +80,7 @@ shear doCommand cmds = case (doCommand, cmds) of
           exec cs = do
             x <- mapM (\t -> runCmds (fst t) (snd t)) cs
             TIO.putStrLn $ T.unlines (rights x)
-            putStrLn . unlines $ map ss (lefts x)
+            putStrLn . unlines $ map shellErrorMsg (lefts x)
 
 
 runCmds :: String -> [String] -> IO (Either ShellError T.Text)
@@ -111,36 +97,36 @@ takeBranches Nothing  (x:xs) = x:xs
 takeBranches (Just i) (x:xs) = take i (x:xs)
 
 
-validateNonOptions :: [String] -> Either String String
-validateNonOptions xs = case xs of
-    []     -> Left "You must specify a refname"
-    [i]    -> Right i
-    (_:is) -> Left $ unlines ["Unsupported option: " ++ x | x <- is]
+data App = App { refname :: String
+               , dryRun :: Bool }
+
+app :: Parser App
+app = App
+    <$> argument str (metavar "REFNAME")
+    <*> switch (long "dry-run" <> help "Actually delete the stale branches")
 
 
-ss :: ShellError -> String
-ss (ShellError stde code) = "Result: " ++ stde
+-- ideally, takeBranches should be part of getBranchNames so that we
+-- reduce the list of branches _before_ filtering and sorting it
+names ref limit remote = fmap pipeline $ mergedRemotes ref
+    where pipeline = (stripRemoteFromName remote) . (takeBranches $ Just limit ). getBranchNames
+
+
+run (App refname dryRun) = do
+    ref <- refExists refname
+    case ref of
+         Left err   -> error $ shellErrorMsg err
+         Right hash -> do
+             branches <- names (T.unpack hash) 4 "origin"
+             _ <- shear (not dryRun) $ branchDeleteCmds branches
+             return ()
 
 
 main :: IO ()
 main = do
-    args <- getArgs
-    let (actions, nonOptions, errors) = getOpt Permute options args
-    opts <- foldl (>>=) (return defaultOptions) actions
-
-    _ <- exitIfErrors errors
-    _ <- case validateNonOptions nonOptions of
-        Left err      -> exitIfErrors [err]
-        Right refname -> do
-            ref <- refExists refname
-            either exitWithShellError (\_ -> return "") ref
-
-    let refname = either (error "mismatch") id (validateNonOptions nonOptions)
-    output <- mergedRemotes refname
-    let Options {optLimit = limit, optDryRun = dryRun, optRemote = remote} = opts
-
-    -- ideally, takeBranches should be part of getBranchNames so that we
-    -- reduce the list of branches _before_ filtering and sorting it
-    let bs = (stripRemoteFromName remote) . (takeBranches limit) . getBranchNames $ output
-    _ <- shear (not dryRun) $ branchDeleteCmds bs
-    return ()
+    execParser opts >>= run
+      where
+          opts = info (helper <*> app)
+            (fullDesc
+            <> progDesc "Delete branches that have been merged into REFNAME"
+            <> header "git-shear - delete stale remote branches")
