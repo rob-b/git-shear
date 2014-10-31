@@ -11,8 +11,12 @@ import Data.Either            (lefts, rights)
 import Options.Applicative
 
 
-rstrip :: String -> String
-rstrip = reverse . dropWhile isSpace . reverse
+data ShellError = ShellError { shellErrorMsg :: T.Text
+                             , shellErrorCode :: Int }
+
+
+rstrip :: T.Text -> T.Text
+rstrip = T.reverse . T.dropWhile isSpace . T.reverse
 
 
 isProtectedBranch :: T.Text -> Bool
@@ -33,18 +37,21 @@ mergedRemotes :: String -> IO String
 mergedRemotes refname' = readProcess "git" ["branch", "-r", "--merged", refname'] ""
 
 
-data ShellError = ShellError { shellErrorMsg :: String
-                             , shellErrorCode :: Int }
+readProcess2 :: FilePath -> [String] -> String -> IO (ExitCode, T.Text, T.Text)
+readProcess2 fp args stdin = do
+    procResult <- readProcessWithExitCode fp args stdin
+    return $ toText procResult
+      where
+          toText (a, b, c) = (a, T.pack b, T.pack c)
+
 
 refExists :: String -> IO (Either ShellError T.Text)
 refExists refname' = do
-    (code, stdo, stde) <- readProcessWithExitCode "git" ["rev-parse", refname', "--"] ""
+    (code, stdo, stde) <- readProcess2  "git" ["rev-parse", refname', "--"] ""
     case code of
         ExitFailure c -> return . Left $ ShellError stde c
-
-        -- FIXME: a crazy amount of String -> Text -> String transformations
-        ExitSuccess   -> return . Right .T.pack $ tidyName stdo
-          where tidyName s = rstrip . T.unpack $ T.replace "--" "" (T.pack s)
+        ExitSuccess   -> return . Right $ tidyName stdo
+          where tidyName = rstrip . T.replace "--" ""
 
 
 getBranchNames :: String -> [T.Text]
@@ -80,51 +87,54 @@ shear doCommand cmds = case (doCommand, cmds) of
           exec cs = do
             x <- mapM (\t -> runCmds (fst t) (snd t)) cs
             TIO.putStrLn $ T.unlines (rights x)
-            putStrLn . unlines $ map shellErrorMsg (lefts x)
+            TIO.putStrLn . T.unlines $ map shellErrorMsg (lefts x)
 
 
 runCmds :: String -> [String] -> IO (Either ShellError T.Text)
 runCmds fname args = do
-    (code, _, stde) <- readProcessWithExitCode fname args ""
+    (code, _, stde) <- readProcess2 fname args ""
     case code of
         ExitFailure c -> return . Left $ ShellError stde c
-        ExitSuccess   -> return . Right $ T.pack stde
+        ExitSuccess   -> return . Right $ stde
 
 
-takeBranches :: Maybe Int -> [T.Text] -> [T.Text]
-takeBranches _ []            = []
-takeBranches Nothing  (x:xs) = x:xs
-takeBranches (Just i) (x:xs) = take i (x:xs)
+takeBranches :: Int -> [T.Text] -> [T.Text]
+takeBranches _ []     = []
+takeBranches i (x:xs) = take i (x:xs)
 
 
 data App = App { refname :: String
-               , dryRun :: Bool }
+               , dryRun  :: Bool
+               , limit   :: Int}
 
 app :: Parser App
 app = App
     <$> argument str (metavar "REFNAME")
-    <*> switch (long "dry-run" <> help "Actually delete the stale branches")
+    <*> switch (long "dry-run" <> short 'n' <> help "Show which branches would be deleted, without really deleting anything.")
+    <*> option auto (long "limit" <> short 'l' <> help "Only delete L stale branches." <> metavar "L")
 
 
 -- ideally, takeBranches should be part of getBranchNames so that we
 -- reduce the list of branches _before_ filtering and sorting it
+
+names :: String -> Int -> T.Text -> IO [T.Text]
 names ref limit remote = fmap pipeline $ mergedRemotes ref
-    where pipeline = (stripRemoteFromName remote) . (takeBranches $ Just limit ). getBranchNames
+    where pipeline = (stripRemoteFromName remote) . (takeBranches limit) . getBranchNames
 
 
-run (App refname dryRun) = do
+run :: App -> IO ()
+run (App refname dryRun limit) = do
     ref <- refExists refname
     case ref of
-         Left err   -> error $ shellErrorMsg err
+         Left err   -> error . show $ shellErrorMsg err
          Right hash -> do
-             branches <- names (T.unpack hash) 4 "origin"
+             branches <- names (T.unpack hash) limit "origin"
              _ <- shear (not dryRun) $ branchDeleteCmds branches
              return ()
 
 
 main :: IO ()
-main = do
-    execParser opts >>= run
+main = execParser opts >>= run
       where
           opts = info (helper <*> app)
             (fullDesc
