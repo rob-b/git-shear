@@ -98,26 +98,27 @@ runCmds fname args = do
         ExitSuccess   -> return . Right $ stde
 
 
-takeBranches :: Int -> [T.Text] -> [T.Text]
-takeBranches _ []     = []
-takeBranches i (x:xs) = take i (x:xs)
+takeBranches :: Maybe Int -> [T.Text] -> [T.Text]
+takeBranches _ []        = []
+takeBranches Nothing xs  = xs
+takeBranches (Just i) xs = take i xs
 
 
 data App = App { refname :: String
                , dryRun  :: Bool
-               , limit   :: Int}
+               , limit   :: Maybe Int}
 
 app :: Parser App
 app = App
     <$> argument str (metavar "REFNAME")
     <*> switch (long "dry-run" <> short 'n' <> help "Show which branches would be deleted, without really deleting anything.")
-    <*> option auto (long "limit" <> short 'l' <> help "Only delete L stale branches." <> metavar "L")
+    <*> optional (option auto (long "limit" <> short 'l' <> help "Only delete L stale branches." <> metavar "L"))
 
 
 -- ideally, takeBranches should be part of getBranchNames so that we
 -- reduce the list of branches _before_ filtering and sorting it
 
-names :: String -> Int -> T.Text -> IO [T.Text]
+names :: String -> Maybe Int -> T.Text -> IO [T.Text]
 names ref limit remote = fmap pipeline $ mergedRemotes ref
     where pipeline = (stripRemoteFromName remote) . (takeBranches limit) . getBranchNames
 
