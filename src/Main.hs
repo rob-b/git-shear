@@ -59,7 +59,7 @@ getBranchNames s = sort . filterBranches . extractBranches $ T.pack s
 
 
 stripRemoteFromName :: T.Text -> [T.Text] -> [T.Text]
-stripRemoteFromName r xs = map (T.replace (r `T.append` "/") "") xs
+stripRemoteFromName r = map (T.replace (r `T.append` "/") "")
 
 
 branchCount :: [T.Text] -> T.Text
@@ -73,8 +73,7 @@ branchDeleteCmds bs = [T.append "git push origin --delete " x | x <- bs]
 
 shear :: Bool -> [T.Text] -> IO T.Text
 shear doCommand cmds = case (doCommand, cmds) of
-    (_, []) -> do
-        error "No command to execute"
+    (_, []) -> error "No branches to delete"
     (False, xs) -> do
         TIO.putStrLn $ branchCount xs
         exec $ getAllCmds $ map (flip T.append " --dry-run") xs
@@ -120,7 +119,7 @@ app = App
 
 names :: String -> Maybe Int -> T.Text -> IO [T.Text]
 names ref limit remote = fmap pipeline $ mergedRemotes ref
-    where pipeline = (stripRemoteFromName remote) . (takeBranches limit) . getBranchNames
+    where pipeline = stripRemoteFromName remote . takeBranches limit . getBranchNames
 
 
 run :: App -> IO ()
