@@ -2,12 +2,12 @@
 module Main where
 
 import System.Exit
+import Control.Monad
 import System.Process
 import qualified Data.Text    as T
 import qualified Data.Text.IO as TIO
 import Data.List              (sort)
 import Data.Char              (isSpace)
-import Data.Either            (lefts, rights)
 import Options.Applicative
 
 
@@ -76,17 +76,22 @@ shear doCommand cmds = case (doCommand, cmds) of
     (_, []) -> error "No branches to delete"
     (False, xs) -> do
         TIO.putStrLn $ branchCount xs
-        exec $ getAllCmds $ map (flip T.append " --dry-run") xs
+        exec $ getAllCmds $ map (`T.append` " --dry-run") xs
         return ""
     (True, xs) -> do
         exec $ getAllCmds xs
         return ""
-    where separate (_:xx) = ("git", (map T.unpack xx))
+    where separate (_:xx) = ("git", map T.unpack xx)
           getAllCmds = map (separate .T.words)
-          exec cs = do
-            x <- mapM (\t -> runCmds (fst t) (snd t)) cs
-            TIO.putStrLn $ T.unlines (rights x)
-            TIO.putStrLn . T.unlines $ map shellErrorMsg (lefts x)
+          exec cs = printCmdOutput $ map (uncurry runCmds) cs
+
+
+printCmdOutput :: [IO (Either ShellError T.Text)] -> IO ()
+printCmdOutput cmds = forM_ cmds $ \cmd -> do
+    unwrapped <- cmd
+    case unwrapped of
+         Left err -> TIO.putStrLn $ shellErrorMsg err
+         Right st -> TIO.putStrLn st
 
 
 runCmds :: String -> [String] -> IO (Either ShellError T.Text)
