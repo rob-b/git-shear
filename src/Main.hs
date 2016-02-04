@@ -34,7 +34,7 @@ extractBranches s = map T.strip (T.lines s)
 
 
 mergedRemotes :: String -> IO String
-mergedRemotes refname' = readProcess "git" ["branch", "-r", "--merged", refname'] ""
+mergedRemotes refname' = readProcess "git" ["branch", "--list", "origin*", "-r", "--merged", refname'] ""
 
 
 readProcess2 :: FilePath -> [String] -> String -> IO (ExitCode, T.Text, T.Text)
