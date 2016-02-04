@@ -62,7 +62,7 @@ executable git-shear
   -- other-extensions:
 
   -- Other library packages from which modules are imported.
-  build-depends:       base >=4.7 && <4.8, process, text, pretty, optparse-applicative
+  build-depends:       base >=4.8 && <4.9, process, text, pretty, optparse-applicative
 
   -- Directories containing source files.
   -- hs-source-dirs:
