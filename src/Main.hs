@@ -8,12 +8,15 @@ import qualified Data.Text    as T
 import qualified Data.Text.IO as TIO
 import Data.List              (sort)
 import Data.Char              (isSpace)
+import Data.Maybe             (fromMaybe)
 import Options.Applicative
 
 
 data ShellError = ShellError { shellErrorMsg :: T.Text
                              , shellErrorCode :: Int }
 
+type CommitHash = String
+type RemoteName = String
 
 rstrip :: T.Text -> T.Text
 rstrip = T.reverse . T.dropWhile isSpace . T.reverse
@@ -76,7 +79,7 @@ shear doCommand cmds = case (doCommand, cmds) of
     (_, []) -> error "No branches to delete"
     (False, xs) -> do
         TIO.putStrLn $ branchCount xs
-        exec $ getAllCmds $ map (`T.append` " --dry-run") xs
+        exec . getAllCmds $ map (`T.append` " --dry-run") xs
         return ""
     (True, xs) -> do
         exec $ getAllCmds xs
@@ -108,40 +111,54 @@ takeBranches Nothing xs  = xs
 takeBranches (Just i) xs = take i xs
 
 
-data App = App { refname :: String
-               , dryRun  :: Bool
-               , limit   :: Maybe Int}
+data App = App { remoteName :: Maybe RemoteName
+               , refname    :: CommitHash
+               , dryRun     :: Bool
+               , limit      :: Maybe Int}
+               deriving (Show)
 
-app :: Parser App
-app = App
-    <$> argument str (metavar "REFNAME")
-    <*> switch (long "dry-run" <> short 'n' <> help "Show which branches would be deleted, without really deleting anything.")
-    <*> optional (option auto (long "limit" <> short 'l' <> help "Only delete L stale branches." <> metavar "L"))
-
+data Option = Option {
+               arguments       :: [String]
+               , dryRun2       :: Bool
+               , limit2        :: Maybe Int}
+               deriving (Show)
 
 -- ideally, takeBranches should be part of getBranchNames so that we
 -- reduce the list of branches _before_ filtering and sorting it
 
-names :: String -> Maybe Int -> T.Text -> IO [T.Text]
-names ref limit remote = fmap pipeline $ mergedRemotes ref
-    where pipeline = stripRemoteFromName remote . takeBranches limit . getBranchNames
+names :: CommitHash -> Maybe Int -> RemoteName -> IO [T.Text]
+names ref limit remote = pipeline <$> mergedRemotes ref
+    where pipeline = stripRemoteFromName (T.pack remote) . takeBranches limit . getBranchNames
 
 
 run :: App -> IO ()
-run (App refname dryRun limit) = do
+run (App remoteName refname dryRun limit) = do
     ref <- refExists refname
     case ref of
          Left err   -> error . show $ shellErrorMsg err
          Right hash -> do
-             branches <- names (T.unpack hash) limit "origin"
+             branches <- names (T.unpack hash) limit (fromMaybe "origin" remoteName)
              _ <- shear (not dryRun) $ branchDeleteCmds branches
              return ()
 
+options :: Parser Option
+options = Option
+    <$> some (argument str (metavar "REFNAME"))
+    <*> switch (long "dry-run" <> short 'n' <> help "Show which branches would be deleted, without really deleting anything.")
+    <*> optional (option auto (long "limit" <> short 'l' <> help "Only delete L stale branches." <> metavar "L"))
 
-main :: IO ()
-main = execParser opts >>= run
-      where
-          opts = info (helper <*> app)
+
+determineArgs :: Option -> IO ()
+determineArgs (Option arguments dryRun2 limit2) = do
+  case length arguments of
+    1 -> run $ App Nothing (head arguments) dryRun2 limit2
+    2 -> run $ App (Just (head arguments)) (arguments !! 1) dryRun2 limit2
+    _ -> error "Nah"
+
+
+main = do
+  execParser optionswithInfo >>= determineArgs
+  where optionswithInfo = info (helper <*> options)
             (fullDesc
             <> progDesc "Delete branches that have been merged into REFNAME"
             <> header "git-shear - delete stale remote branches")
