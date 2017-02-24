@@ -1,0 +1,17 @@
+name: shear
+version: '0.1.0.0'
+synopsis: Remove merged remote branches
+author: Rob Berry
+maintainer: rob@lostpropertyhq.com
+license: BSD3
+homepage: https://github.com/LostProperty/shear
+dependencies:
+- base
+- process
+- text
+- pretty
+- optparse-applicative
+executables:
+  git-shear:
+    main: Main.hs
+    source-dirs: src
