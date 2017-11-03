@@ -13,6 +13,7 @@ import Data.Char (isSpace)
 import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
 import Options.Applicative
+import Debug.Trace
 
 data ShellError = ShellError
   { shellErrorMsg :: T.Text
@@ -137,12 +138,12 @@ names ref limit' remote = pipeline <$> mergedRemotes ref
 
 run :: App -> IO ()
 run (App remote ref dryRun' limit') =
-  refExists ref >>=
-  \case
+  refExists ref >>= \case
     Left err -> TIO.putStr (shellErrorMsg err) >> exitFailure
     Right hash -> do
       branches <- names (T.unpack hash) limit' (fromMaybe "origin" remote)
-      _ <- shear (not dryRun') $ branchDeleteCmds branches
+      let branches' = filter (\b -> T.isPrefixOf "robb" b) branches
+      _ <- shear (not dryRun') $ branchDeleteCmds branches'
       return ()
 
 options :: Parser Option
